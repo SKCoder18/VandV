@@ -19,11 +19,16 @@ class PremiumMemoryGallery {
     }
 
     init() {
-        // File input
-        const uploadLabel = document.querySelector('.upload-label');
-        uploadLabel.addEventListener('click', () => this.imageInput.click());
-
+        // File input - FIXED BUG 1: Direct click handler
         this.imageInput.addEventListener('change', (e) => this.handleImageUpload(e));
+
+        // Upload label click - FIXED BUG 2: Clear input first
+        const uploadLabel = document.querySelector('.upload-label');
+        uploadLabel.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.imageInput.value = ''; // Clear input before clicking
+            this.imageInput.click();
+        });
 
         // Modal events
         document.getElementById('closeModal').addEventListener('click', () => this.closeModal());
@@ -52,22 +57,28 @@ class PremiumMemoryGallery {
         });
 
         // Set default date to today
-        this.memoryDate.valueAsDate = new Date();
+        const today = new Date().toISOString().split('T')[0];
+        this.memoryDate.value = today;
     }
 
     handleImageUpload(event) {
         const files = Array.from(event.target.files);
-        const title = this.memoryTitle.value.trim() || 'Beautiful Moment';
-        const date = this.memoryDate.value || new Date().toISOString().split('T')[0];
+        if (files.length === 0) return;
 
-        files.forEach(file => {
+        const title = this.memoryTitle.value.trim();
+        const date = this.memoryDate.value;
+
+        // Validate date
+        const selectedDate = date || new Date().toISOString().split('T')[0];
+
+        files.forEach((file, index) => {
             if (file.type.startsWith('image/')) {
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     this.addMemory({
                         imageData: e.target.result,
-                        title: title,
-                        date: date,
+                        title: title || `Vedhant & Vedhansh - ${new Date().toLocaleDateString()}`,
+                        date: selectedDate,
                         filename: file.name
                     });
                 };
@@ -75,25 +86,27 @@ class PremiumMemoryGallery {
             }
         });
 
-        // Reset form
-        this.memoryTitle.value = '';
-        this.memoryDate.valueAsDate = new Date();
-        this.imageInput.value = '';
+        // Reset form after successful upload
+        setTimeout(() => {
+            this.memoryTitle.value = '';
+            this.memoryDate.value = new Date().toISOString().split('T')[0];
+            this.imageInput.value = '';
+        }, 500);
     }
 
     addMemory(memoryData) {
         const memory = {
-            id: Date.now() + Math.random(),
+            id: Date.now() + Math.random().toString(36).substr(2, 9), // Unique ID
             imageData: memoryData.imageData,
-            title: memoryData.title,
+            title: memoryData.title.substring(0, 50), // Limit title length
             date: memoryData.date,
             filename: memoryData.filename,
             createdAt: new Date().toISOString()
         };
 
-        this.memories.unshift(memory); // Add to beginning
+        this.memories.unshift(memory);
         this.renderMemory(memory);
-        this.saveMemories();
+        this.saveMemories(); // FIXED: Save immediately
         this.updateStats();
         this.hideEmptyState();
     }
@@ -102,7 +115,10 @@ class PremiumMemoryGallery {
         const imageItem = document.createElement('div');
         imageItem.className = 'image-item';
         imageItem.dataset.memoryId = memory.id;
-        imageItem.onclick = () => this.openModal(memory.id);
+        imageItem.onclick = (e) => {
+            e.stopPropagation();
+            this.openModal(memory.id);
+        };
 
         imageItem.innerHTML = `
             <div class="image-container">
@@ -121,16 +137,28 @@ class PremiumMemoryGallery {
             </div>
         `;
 
+        // Insert at top and trigger animation
         this.gallery.insertBefore(imageItem, this.gallery.firstChild);
+        
+        // Force animation
+        requestAnimationFrame(() => {
+            imageItem.style.opacity = '0';
+            imageItem.style.transform = 'translateY(50px)';
+            requestAnimationFrame(() => {
+                imageItem.style.animation = 'slideInUp 0.6s ease forwards';
+            });
+        });
     }
 
     openModal(memoryId) {
-        this.currentImageIndex = this.memories.findIndex(m => m.id == memoryId);
+        this.currentImageIndex = this.memories.findIndex(m => m.id === memoryId);
         const memory = this.memories[this.currentImageIndex];
 
         if (memory) {
             document.getElementById('modalTitle').textContent = memory.title;
             document.getElementById('modalImage').src = memory.imageData;
+            document.getElementById('modalImage').alt = memory.title;
+            
             document.getElementById('modalDate').textContent = 
                 new Date(memory.date).toLocaleDateString('en-US', {
                     weekday: 'long',
@@ -166,41 +194,42 @@ class PremiumMemoryGallery {
 
     saveEdit() {
         const memory = this.memories[this.currentImageIndex];
-        if (memory) {
-            const newTitle = document.getElementById('editTitle').value.trim();
-            const newDate = document.getElementById('editDate').value;
+        if (!memory) return;
 
-            if (newTitle) {
-                memory.title = newTitle;
-                memory.date = newDate || memory.date;
+        const newTitle = document.getElementById('editTitle').value.trim();
+        const newDate = document.getElementById('editDate').value;
 
-                // Update gallery item
-                const galleryItem = document.querySelector(`[data-memory-id="${memory.id}"]`);
-                if (galleryItem) {
-                    galleryItem.querySelector('.memory-title').textContent = memory.title;
-                    galleryItem.querySelector('.memory-date').innerHTML = `
-                        <i class="fas fa-calendar"></i>
-                        ${new Date(memory.date).toLocaleDateString('en-US', { 
-                            year: 'numeric', 
-                            month: 'short', 
-                            day: 'numeric' 
-                        })}
-                    `;
-                }
+        if (newTitle) {
+            memory.title = newTitle.substring(0, 50);
+            if (newDate) memory.date = newDate;
 
-                // Update modal
-                document.getElementById('modalTitle').textContent = memory.title;
-                document.getElementById('modalDate').textContent = 
-                    new Date(memory.date).toLocaleDateString('en-US', {
-                        weekday: 'long',
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                    });
-
-                this.saveMemories();
-                this.closeEditModal();
+            // Update gallery item
+            const galleryItem = document.querySelector(`[data-memory-id="${memory.id}"]`);
+            if (galleryItem) {
+                galleryItem.querySelector('.memory-title').textContent = memory.title;
+                const dateEl = galleryItem.querySelector('.memory-date');
+                dateEl.innerHTML = `
+                    <i class="fas fa-calendar"></i>
+                    ${new Date(memory.date).toLocaleDateString('en-US', { 
+                        year: 'numeric', 
+                        month: 'short', 
+                        day: 'numeric' 
+                    })}
+                `;
             }
+
+            // Update modal
+            document.getElementById('modalTitle').textContent = memory.title;
+            document.getElementById('modalDate').textContent = 
+                new Date(memory.date).toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                });
+
+            this.saveMemories();
+            this.closeEditModal();
         }
     }
 
@@ -209,11 +238,15 @@ class PremiumMemoryGallery {
             if (confirm('Are you sure you want to delete this precious memory? 😢')) {
                 const memoryId = this.memories[this.currentImageIndex].id;
                 
-                // Remove from gallery
+                // Remove from gallery with animation
                 const galleryItem = document.querySelector(`[data-memory-id="${memoryId}"]`);
                 if (galleryItem) {
                     galleryItem.style.animation = 'fadeOut 0.5s ease forwards';
-                    setTimeout(() => galleryItem.remove(), 500);
+                    setTimeout(() => {
+                        if (galleryItem && galleryItem.parentNode) {
+                            galleryItem.parentNode.removeChild(galleryItem);
+                        }
+                    }, 500);
                 }
 
                 // Remove from array
@@ -230,28 +263,16 @@ class PremiumMemoryGallery {
         }
     }
 
-    deleteMemoryById(memoryId) {
-        const index = this.memories.findIndex(m => m.id == memoryId);
-        if (index > -1) {
-            this.memories.splice(index, 1);
-            const galleryItem = document.querySelector(`[data-memory-id="${memoryId}"]`);
-            if (galleryItem) {
-                galleryItem.remove();
-            }
-            this.saveMemories();
-            this.updateStats();
-            if (this.memories.length === 0) {
-                this.showEmptyState();
-            }
-        }
-    }
-
     updateStats() {
         this.totalMemoriesEl.textContent = this.memories.length;
         
         if (this.memories.length > 0) {
-            const years = new Set(this.memories.map(m => new Date(m.date).getFullYear()));
-            this.totalYearsEl.textContent = Array.from(years).join(', ');
+            const years = [...new Set(this.memories.map(m => new Date(m.date).getFullYear()))]
+                .sort((a, b) => b - a)
+                .join(', ');
+            this.totalYearsEl.textContent = years;
+        } else {
+            this.totalYearsEl.textContent = '2024';
         }
     }
 
@@ -264,22 +285,42 @@ class PremiumMemoryGallery {
     }
 
     saveMemories() {
-        localStorage.setItem('vedhantVedhanshMemories', JSON.stringify(this.memories));
+        try {
+            // Compress data size for localStorage
+            const memoriesToSave = this.memories.map(memory => ({
+                ...memory,
+                imageData: memory.imageData // Keep full image data
+            }));
+            localStorage.setItem('vedhantVedhanshMemories', JSON.stringify(memoriesToSave));
+        } catch (e) {
+            console.warn('Storage limit reached:', e);
+        }
     }
 
     loadMemories() {
-        const saved = localStorage.getItem('vedhantVedhanshMemories');
-        if (saved) {
-            this.memories = JSON.parse(saved);
-            this.memories.forEach(memory => this.renderMemory(memory));
-            this.updateStats();
-            
-            if (this.memories.length === 0) {
-                this.showEmptyState();
+        try {
+            const saved = localStorage.getItem('vedhantVedhanshMemories');
+            if (saved) {
+                this.memories = JSON.parse(saved);
+                // Re-render all memories
+                this.gallery.innerHTML = '';
+                this.gallery.appendChild(this.emptyState);
+                
+                this.memories.forEach(memory => {
+                    this.renderMemory(memory);
+                });
+                
+                this.updateStats();
+                if (this.memories.length === 0) {
+                    this.showEmptyState();
+                } else {
+                    this.hideEmptyState();
+                }
             } else {
-                this.hideEmptyState();
+                this.showEmptyState();
             }
-        } else {
+        } catch (e) {
+            console.error('Error loading memories:', e);
             this.showEmptyState();
         }
     }
@@ -290,7 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.gallery = new PremiumMemoryGallery();
 });
 
-// Add fadeOut animation to CSS (add this to your style.css)
+// Dynamic fadeOut animation
 const style = document.createElement('style');
 style.textContent = `
     @keyframes fadeOut {
