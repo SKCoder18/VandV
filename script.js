@@ -12,6 +12,7 @@ class PremiumMemoryGallery {
 
         this.currentImageIndex = -1;
         this.memories = [];
+        this.maxStorageSize = 4 * 1024 * 1024; // 4MB limit for mobile
 
         this.init();
         this.loadMemories();
@@ -19,14 +20,14 @@ class PremiumMemoryGallery {
     }
 
     init() {
-        // File input - FIXED BUG 1: Direct click handler
+        // File input
         this.imageInput.addEventListener('change', (e) => this.handleImageUpload(e));
 
-        // Upload label click - FIXED BUG 2: Clear input first
+        // Upload label click
         const uploadLabel = document.querySelector('.upload-label');
         uploadLabel.addEventListener('click', (e) => {
             e.preventDefault();
-            this.imageInput.value = ''; // Clear input before clicking
+            this.imageInput.value = '';
             this.imageInput.click();
         });
 
@@ -39,16 +40,10 @@ class PremiumMemoryGallery {
         document.getElementById('saveEdit').addEventListener('click', () => this.saveEdit());
         document.getElementById('cancelEdit').addEventListener('click', () => this.closeEditModal());
 
-        // Close modals on outside click
-        this.modal.addEventListener('click', (e) => {
-            if (e.target === this.modal) this.closeModal();
-        });
+        // Close modals
+        this.modal.addEventListener('click', (e) => e.target === this.modal && this.closeModal());
+        this.editModal.addEventListener('click', (e) => e.target === this.editModal && this.closeEditModal());
 
-        this.editModal.addEventListener('click', (e) => {
-            if (e.target === this.editModal) this.closeEditModal();
-        });
-
-        // Close on Escape key
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 this.closeModal();
@@ -56,57 +51,96 @@ class PremiumMemoryGallery {
             }
         });
 
-        // Set default date to today
-        const today = new Date().toISOString().split('T')[0];
-        this.memoryDate.value = today;
+        // Default date
+        this.memoryDate.value = new Date().toISOString().split('T')[0];
     }
 
-    handleImageUpload(event) {
+    // 🔥 MOBILE-FIX: Compress images for storage
+    compressImage(file, maxWidth = 800, quality = 0.7) {
+        return new Promise((resolve) => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+
+            img.onload = () => {
+                // Calculate new size
+                const ratio = Math.min(maxWidth / img.width, maxWidth / img.height);
+                canvas.width = img.width * ratio;
+                canvas.height = img.height * ratio;
+
+                // Draw and compress
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+                resolve(compressedDataUrl);
+            };
+
+            img.src = URL.createObjectURL(file);
+        });
+    }
+
+    async handleImageUpload(event) {
         const files = Array.from(event.target.files);
         if (files.length === 0) return;
 
-        const title = this.memoryTitle.value.trim();
-        const date = this.memoryDate.value;
+        const title = this.memoryTitle.value.trim() || `Vedhant & Vedhansh - ${new Date().toLocaleDateString()}`;
+        const date = this.memoryDate.value || new Date().toISOString().split('T')[0];
 
-        // Validate date
-        const selectedDate = date || new Date().toISOString().split('T')[0];
-
-        files.forEach((file, index) => {
+        for (let file of files) {
             if (file.type.startsWith('image/')) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
+                try {
+                    // Compress image for mobile storage
+                    const compressedImageData = await this.compressImage(file, 800, 0.8);
+                    
                     this.addMemory({
-                        imageData: e.target.result,
-                        title: title || `Vedhant & Vedhansh - ${new Date().toLocaleDateString()}`,
-                        date: selectedDate,
+                        imageData: compressedImageData,
+                        title: title,
+                        date: date,
                         filename: file.name
                     });
-                };
-                reader.readAsDataURL(file);
+                } catch (error) {
+                    console.error('Image compression failed:', error);
+                    // Fallback: use original (smaller images)
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        this.addMemory({
+                            imageData: e.target.result,
+                            title: title,
+                            date: date,
+                            filename: file.name
+                        });
+                    };
+                    reader.readAsDataURL(file);
+                }
             }
-        });
+        }
 
-        // Reset form after successful upload
+        // Reset form
         setTimeout(() => {
             this.memoryTitle.value = '';
             this.memoryDate.value = new Date().toISOString().split('T')[0];
             this.imageInput.value = '';
-        }, 500);
+        }, 100);
     }
 
     addMemory(memoryData) {
         const memory = {
-            id: Date.now() + Math.random().toString(36).substr(2, 9), // Unique ID
+            id: 'mem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
             imageData: memoryData.imageData,
-            title: memoryData.title.substring(0, 50), // Limit title length
+            title: memoryData.title.substring(0, 50),
             date: memoryData.date,
             filename: memoryData.filename,
             createdAt: new Date().toISOString()
         };
 
         this.memories.unshift(memory);
+        
+        // Limit to 20 memories on mobile to prevent storage issues
+        if (this.memories.length > 20) {
+            this.memories = this.memories.slice(0, 20);
+        }
+
         this.renderMemory(memory);
-        this.saveMemories(); // FIXED: Save immediately
+        this.saveMemories();
         this.updateStats();
         this.hideEmptyState();
     }
@@ -129,25 +163,13 @@ class PremiumMemoryGallery {
                 <div class="memory-date">
                     <i class="fas fa-calendar"></i>
                     ${new Date(memory.date).toLocaleDateString('en-US', { 
-                        year: 'numeric', 
-                        month: 'short', 
-                        day: 'numeric' 
+                        year: 'numeric', month: 'short', day: 'numeric' 
                     })}
                 </div>
             </div>
         `;
 
-        // Insert at top and trigger animation
         this.gallery.insertBefore(imageItem, this.gallery.firstChild);
-        
-        // Force animation
-        requestAnimationFrame(() => {
-            imageItem.style.opacity = '0';
-            imageItem.style.transform = 'translateY(50px)';
-            requestAnimationFrame(() => {
-                imageItem.style.animation = 'slideInUp 0.6s ease forwards';
-            });
-        });
     }
 
     openModal(memoryId) {
@@ -161,10 +183,7 @@ class PremiumMemoryGallery {
             
             document.getElementById('modalDate').textContent = 
                 new Date(memory.date).toLocaleDateString('en-US', {
-                    weekday: 'long',
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric'
+                    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
                 });
 
             this.modal.style.display = 'block';
@@ -203,29 +222,22 @@ class PremiumMemoryGallery {
             memory.title = newTitle.substring(0, 50);
             if (newDate) memory.date = newDate;
 
-            // Update gallery item
+            // Update gallery
             const galleryItem = document.querySelector(`[data-memory-id="${memory.id}"]`);
             if (galleryItem) {
                 galleryItem.querySelector('.memory-title').textContent = memory.title;
                 const dateEl = galleryItem.querySelector('.memory-date');
-                dateEl.innerHTML = `
-                    <i class="fas fa-calendar"></i>
+                dateEl.innerHTML = `<i class="fas fa-calendar"></i>
                     ${new Date(memory.date).toLocaleDateString('en-US', { 
-                        year: 'numeric', 
-                        month: 'short', 
-                        day: 'numeric' 
-                    })}
-                `;
+                        year: 'numeric', month: 'short', day: 'numeric' 
+                    })}`;
             }
 
             // Update modal
             document.getElementById('modalTitle').textContent = memory.title;
             document.getElementById('modalDate').textContent = 
                 new Date(memory.date).toLocaleDateString('en-US', {
-                    weekday: 'long',
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric'
+                    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
                 });
 
             this.saveMemories();
@@ -235,108 +247,101 @@ class PremiumMemoryGallery {
 
     deleteCurrentMemory() {
         if (this.currentImageIndex >= 0) {
-            if (confirm('Are you sure you want to delete this precious memory? 😢')) {
+            if (confirm('Delete this precious memory? 😢')) {
                 const memoryId = this.memories[this.currentImageIndex].id;
                 
-                // Remove from gallery with animation
                 const galleryItem = document.querySelector(`[data-memory-id="${memoryId}"]`);
                 if (galleryItem) {
                     galleryItem.style.animation = 'fadeOut 0.5s ease forwards';
-                    setTimeout(() => {
-                        if (galleryItem && galleryItem.parentNode) {
-                            galleryItem.parentNode.removeChild(galleryItem);
-                        }
-                    }, 500);
+                    setTimeout(() => galleryItem.remove(), 500);
                 }
 
-                // Remove from array
                 this.memories.splice(this.currentImageIndex, 1);
-                
                 this.saveMemories();
                 this.updateStats();
                 this.closeModal();
 
-                if (this.memories.length === 0) {
-                    this.showEmptyState();
-                }
+                if (this.memories.length === 0) this.showEmptyState();
             }
         }
     }
 
     updateStats() {
         this.totalMemoriesEl.textContent = this.memories.length;
-        
         if (this.memories.length > 0) {
             const years = [...new Set(this.memories.map(m => new Date(m.date).getFullYear()))]
-                .sort((a, b) => b - a)
-                .join(', ');
+                .sort((a,b)=>b-a).join(', ');
             this.totalYearsEl.textContent = years;
-        } else {
-            this.totalYearsEl.textContent = '2024';
         }
     }
 
-    showEmptyState() {
-        this.emptyState.style.display = 'block';
-    }
+    showEmptyState() { this.emptyState.style.display = 'block'; }
+    hideEmptyState() { this.emptyState.style.display = 'none'; }
 
-    hideEmptyState() {
-        this.emptyState.style.display = 'none';
-    }
-
+    // 🔥 MOBILE-FIX: Smart storage with size check
     saveMemories() {
         try {
-            // Compress data size for localStorage
-            const memoriesToSave = this.memories.map(memory => ({
-                ...memory,
-                imageData: memory.imageData // Keep full image data
-            }));
-            localStorage.setItem('vedhantVedhanshMemories', JSON.stringify(memoriesToSave));
+            const dataString = JSON.stringify(this.memories);
+            const dataSize = new Blob([dataString]).size;
+
+            if (dataSize > this.maxStorageSize) {
+                console.warn('Storage full! Keeping latest 10 memories');
+                this.memories = this.memories.slice(0, 10);
+                const trimmedData = JSON.stringify(this.memories);
+                localStorage.setItem('vedhantVedhanshMemories_v2', trimmedData);
+            } else {
+                localStorage.setItem('vedhantVedhanshMemories_v2', dataString);
+            }
         } catch (e) {
-            console.warn('Storage limit reached:', e);
+            console.error('Save failed:', e);
         }
     }
 
+    // 🔥 MOBILE-FIX: Robust load with error recovery
     loadMemories() {
         try {
-            const saved = localStorage.getItem('vedhantVedhanshMemories');
+            // Try new key first
+            let saved = localStorage.getItem('vedhantVedhanshMemories_v2');
+            
+            // Fallback to old key
+            if (!saved) {
+                saved = localStorage.getItem('vedhantVedhanshMemories');
+            }
+
             if (saved) {
-                this.memories = JSON.parse(saved);
-                // Re-render all memories
-                this.gallery.innerHTML = '';
-                this.gallery.appendChild(this.emptyState);
+                const parsed = JSON.parse(saved);
+                // Validate data
+                this.memories = Array.isArray(parsed) ? parsed.filter(m => m && m.imageData && m.id) : [];
                 
-                this.memories.forEach(memory => {
-                    this.renderMemory(memory);
-                });
+                // Clear and re-render
+                this.gallery.innerHTML = '<div class="empty-state" id="emptyState" style="display:none;"><i class="fas fa-heart-broken"></i><h3>No memories yet</h3><p>Add your first precious moment above!</p></div>';
+                
+                this.memories.forEach(memory => this.renderMemory(memory));
                 
                 this.updateStats();
-                if (this.memories.length === 0) {
-                    this.showEmptyState();
-                } else {
-                    this.hideEmptyState();
-                }
+                this.memories.length > 0 ? this.hideEmptyState() : this.showEmptyState();
             } else {
                 this.showEmptyState();
             }
         } catch (e) {
-            console.error('Error loading memories:', e);
+            console.error('Load failed, clearing storage:', e);
+            localStorage.removeItem('vedhantVedhanshMemories_v2');
+            localStorage.removeItem('vedhantVedhanshMemories');
+            this.memories = [];
             this.showEmptyState();
         }
     }
 }
 
-// Initialize when DOM is loaded
+// Initialize
 document.addEventListener('DOMContentLoaded', () => {
     window.gallery = new PremiumMemoryGallery();
 });
 
-// Dynamic fadeOut animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes fadeOut {
-        from { opacity: 1; transform: translateY(0); }
-        to { opacity: 0; transform: translateY(-20px); }
-    }
-`;
-document.head.appendChild(style);
+// FadeOut animation
+if (!document.querySelector('#fadeOutStyle')) {
+    const style = document.createElement('style');
+    style.id = 'fadeOutStyle';
+    style.textContent = `@keyframes fadeOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-20px); } }`;
+    document.head.appendChild(style);
+}
